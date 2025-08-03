@@ -71,15 +71,17 @@ LOG_LEVEL=info
 
 ### Database Setup
 
-1. Run migrations to create staging tables:
+1. Run migrations to create all tables:
 ```bash
-npm run migrate
+supabase db push
 ```
 
 2. Generate TypeScript types:
 ```bash
 npm run db:types
 ```
+
+**Note**: Database schema includes contexts & venues tables (deployed 2025-08-03)
 
 ### Configuration
 
@@ -195,11 +197,19 @@ When merging duplicates:
 
 ### Production Tables
 
-**mixes**: Canonicalized mix records
+**mixes**: Canonicalized mix records (includes `venue_id` ✅)
 **tracks**: Individual track records
 **artists**: Artist profiles
 **mix_tracks**: Mix-track relationships with timestamps
 **track_aliases**: Track name variations for fuzzy matching
+
+### Context & Venue Tables ✅ NEW
+
+**venues**: Physical locations, stages, and event spaces
+**contexts**: Cultural contexts (festivals, radio shows, publishers) with hierarchical support
+**mix_contexts**: Many-to-many relationships between mixes and contexts with roles
+
+See `docs/CONTEXTS_VENUES_SCHEMA.md` for detailed documentation.
 
 ## Deployment
 

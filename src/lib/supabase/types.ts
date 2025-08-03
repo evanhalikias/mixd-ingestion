@@ -66,11 +66,54 @@ export interface IngestionLog {
   created_at: string
 }
 
-// External IDs structure for mixes.external_ids JSON field
+// External IDs structure with namespaced keys
 export interface ExternalIds {
   youtube?: string  // yt:video_id
   soundcloud?: string  // sc:track_id
   '1001'?: string  // 1001:mix_id
+  maps?: string  // gmaps:place_id for venues
+  spotify?: string  // spotify:playlist_id
+  facebook?: string  // fb:event_id
+  instagram?: string  // ig:profile_id
+}
+
+// Context and venue type enums (kept in sync with SQL constraints)
+export type ContextType = 'festival' | 'radio_show' | 'publisher' | 'series' | 'label' | 'promoter' | 'stage'
+export type MixContextRole = 'performed_at' | 'broadcasted_on' | 'published_by'
+
+// New table interfaces
+export interface Venue {
+  id: string
+  name: string
+  city: string | null
+  country: string | null
+  lat: number | null
+  lng: number | null
+  capacity: number | null
+  website: string | null
+  external_ids: ExternalIds | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Context {
+  id: string
+  name: string
+  type: ContextType
+  parent_id: string | null
+  website: string | null
+  external_ids: ExternalIds | null
+  venue_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MixContext {
+  id: string
+  mix_id: string
+  context_id: string
+  role: MixContextRole
+  created_at: string
 }
 
 // Database schema type (will be auto-generated)
@@ -122,8 +165,8 @@ export interface Database {
           audio_url: string | null
           cover_url: string | null
           duration: number | null
-          venue: string | null
-          location: string | null
+          venue: string | null  // legacy field - migrating to venue_id
+          location: string | null  // legacy field - migrating to venue_id  
           event_date: string | null
           published_date: string | null
           created_at: string | null
@@ -133,6 +176,7 @@ export interface Database {
           ingestion_source: string | null
           ingestion_notes: string | null
           raw_mix_id: string | null
+          venue_id: string | null  // new relational field
         }
         Insert: any
         Update: any
@@ -207,6 +251,36 @@ export interface Database {
         }
         Insert: any
         Update: any
+      }
+      venues: {
+        Row: Venue
+        Insert: Omit<Venue, 'id' | 'created_at' | 'updated_at'> & {
+          id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: Partial<Omit<Venue, 'id' | 'created_at'>> & {
+          updated_at?: string
+        }
+      }
+      contexts: {
+        Row: Context
+        Insert: Omit<Context, 'id' | 'created_at' | 'updated_at'> & {
+          id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: Partial<Omit<Context, 'id' | 'created_at'>> & {
+          updated_at?: string
+        }
+      }
+      mix_contexts: {
+        Row: MixContext
+        Insert: Omit<MixContext, 'id' | 'created_at'> & {
+          id?: string
+          created_at?: string
+        }
+        Update: Partial<Omit<MixContext, 'id' | 'created_at'>>
       }
     }
     Views: {}

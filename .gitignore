@@ -91,3 +91,8 @@ jspm_packages/
 
 # DynamoDB Local files
 .dynamodb/
+
+# Supabase local development
+supabase/.branches
+supabase/.temp
+supabase/logs
