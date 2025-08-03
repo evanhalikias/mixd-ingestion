@@ -35,7 +35,7 @@ export class JobQueue {
       job_payload: payload,
       max_attempts: maxAttempts,
       next_run: runAt?.toISOString() || new Date().toISOString(),
-      status: 'queued',
+      status: 'pending',
     };
     
     const { data, error } = await this.supabase
@@ -59,7 +59,7 @@ export class JobQueue {
     const { data, error } = await this.supabase
       .from('ingestion_jobs')
       .select('*')
-      .eq('status', 'queued')
+      .eq('status', 'pending')
       .lte('next_run', new Date().toISOString())
       .order('created_at', { ascending: true })
       .limit(1)
@@ -143,7 +143,7 @@ export class JobQueue {
       const { error } = await this.supabase
         .from('ingestion_jobs')
         .update({
-          status: 'retrying',
+          status: 'pending',
           attempts: newAttempts,
           error_message: errorMessage,
           next_run: nextRun.toISOString(),
@@ -187,13 +187,13 @@ export class JobQueue {
   }
   
   /**
-   * Reset a job back to queued status (for manual retry)
+   * Reset a job back to pending status (for manual retry)
    */
   async resetJob(jobId: string): Promise<void> {
     const { error } = await this.supabase
       .from('ingestion_jobs')
       .update({
-        status: 'queued',
+        status: 'pending',
         error_message: null,
         next_run: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -204,7 +204,7 @@ export class JobQueue {
       throw new Error(`Failed to reset job: ${error.message}`);
     }
     
-    await this.log(jobId, 'Job manually reset to queued', 'info');
+    await this.log(jobId, 'Job manually reset to pending', 'info');
   }
   
   /**

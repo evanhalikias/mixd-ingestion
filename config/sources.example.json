@@ -15,10 +15,28 @@
   "youtube": {
     "enabled": true,
     "channels": [
-      "UCGBAsFXa8TP60B4d2CGet0w",
-      "UC0fiLCwTmAukotCXYnqsF8g"
+      {
+        "channelId": "UCPKT_csvP72boVX0XrMtagQ",
+        "mode": "rolling",
+        "name": "Cercle"
+      },
+      {
+        "channelId": "UCGBAsFXa8TP60B4d2CGet0w",
+        "mode": "rolling", 
+        "name": "Lane 8"
+      },
+      {
+        "channelId": "UC_CiDDWOQNqhzD-h_8kOXBg",
+        "mode": "backfill",
+        "name": "Tomorrowland"
+      }
     ],
-    "maxResults": 50
+    "maxResults": 50,
+    "contextDetection": {
+      "enabled": true,
+      "autoVerifyThreshold": 0.9,
+      "logAllDetections": true
+    }
   },
   "1001tracklists": {
     "enabled": true,

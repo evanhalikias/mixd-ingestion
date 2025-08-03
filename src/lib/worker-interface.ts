@@ -40,6 +40,10 @@ export interface SourceConfig {
     to?: Date;
   };
   
+  // Job-specific config
+  mode?: 'backfill' | 'rolling';
+  isVerified?: boolean; // Auto-verify entities based on mode and confidence
+  
   // Source-specific config
   channels?: string[];      // YouTube channel IDs
   artists?: string[];       // SoundCloud artist usernames

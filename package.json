@@ -13,9 +13,11 @@
     "migrate:status": "ts-node migrations/simple-migrate.ts status",
     "ingest": "ts-node src/jobs/run-ingestion.ts",
     "backfill": "ts-node src/jobs/run-backfill.ts",
+    "backfill:youtube": "ts-node src/jobs/backfillYouTube.ts",
     "canonicalize": "ts-node src/jobs/run-canonicalization.ts",
     "canonicalize:retry": "ts-node src/jobs/run-canonicalization.ts retry",
     "canonicalize:stats": "ts-node src/jobs/run-canonicalization.ts stats",
+    "job-runner": "ts-node src/jobs/processIngestionJobs.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

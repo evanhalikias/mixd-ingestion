@@ -283,6 +283,107 @@ npm run canonicalize:retry    # Retry failed jobs
 npm run canonicalize:stats    # Check error distribution
 ```
 
+## Context & Venue Detection ✅ NEW
+
+The system now includes intelligent context and venue detection for YouTube videos with confidence scoring and batch processing support.
+
+### Features
+
+- **Automatic Detection**: Identifies festivals, radio shows, publishers, and venues from video metadata
+- **Confidence Scoring**: 0-1 scale with reason codes for QA analysis
+- **Backfill vs Rolling Modes**: Different processing strategies for historical vs new content
+- **Batch Processing**: Safe processing of large channel backlogs
+- **Deduplication**: Normalized name matching prevents duplicate contexts/venues
+
+### Configuration
+
+Enhanced YouTube configuration with per-channel modes:
+
+```json
+{
+  "youtube": {
+    "enabled": true,
+    "channels": [
+      {
+        "channelId": "UCPKT_csvP72boVX0XrMtagQ",
+        "mode": "rolling",
+        "name": "Cercle"
+      },
+      {
+        "channelId": "UC_CiDDWOQNqhzD-h_8kOXBg",
+        "mode": "backfill", 
+        "name": "Tomorrowland"
+      }
+    ],
+    "contextDetection": {
+      "enabled": true,
+      "autoVerifyThreshold": 0.9,
+      "logAllDetections": true
+    }
+  }
+}
+```
+
+### Usage Examples
+
+**Rolling Mode** (daily new content):
+```bash
+npm run ingest  # Processes rolling channels with auto-verification
+```
+
+**Backfill Mode** (historical content):
+```bash
+npm run backfill:youtube UCPKT_csvP72boVX0XrMtagQ 500  # Cercle channel, 500 videos
+npm run backfill:youtube UC_CiDDWOQNqhzD-h_8kOXBg     # Tomorrowland channel, default limit
+```
+
+### Quality Assurance
+
+**Review Pending Detections**:
+```sql
+-- Check backfill results waiting for review
+SELECT * FROM raw_mixes WHERE status='pending' LIMIT 20;
+
+-- View detected contexts with confidence scores  
+SELECT m.title, c.name, mc.role, 
+       (m.raw_metadata->>'contextVenueDetection')::jsonb
+FROM mixes m 
+JOIN mix_contexts mc ON m.id=mc.mix_id 
+JOIN contexts c ON mc.context_id=c.id 
+ORDER BY m.created_at DESC LIMIT 20;
+```
+
+**Monitor Detection Performance**:
+```sql
+-- Context detection success rates by channel
+SELECT 
+  raw_metadata->>'channelTitle' as channel,
+  COUNT(*) as total_videos,
+  COUNT(CASE WHEN jsonb_array_length((raw_metadata->>'contextVenueDetection')::jsonb->'contexts') > 0 THEN 1 END) as videos_with_contexts
+FROM raw_mixes 
+WHERE provider = 'youtube'
+GROUP BY raw_metadata->>'channelTitle'
+ORDER BY total_videos DESC;
+```
+
+### Detection Patterns
+
+The system recognizes:
+
+- **Festivals**: Tomorrowland, Ultra Music Festival, EDC, Coachella
+- **Radio Shows**: Essential Mix, Group Therapy, Diplo & Friends  
+- **Publishers**: Channel-based mapping (Cercle, Boiler Room, etc.)
+- **Venues**: Printworks London, Fabric, Berghain, Ministry of Sound
+
+See `docs/QA_QUERIES.md` for comprehensive monitoring queries.
+
+### Mode Comparison
+
+| Mode | Use Case | Verification | Processing |
+|------|----------|-------------|------------|
+| **Rolling** | New daily content | Auto-verify confidence ≥0.9 | Real-time ingestion |
+| **Backfill** | Historical content | Manual review required | Batch processing |
+
 ## License
 
 ISC

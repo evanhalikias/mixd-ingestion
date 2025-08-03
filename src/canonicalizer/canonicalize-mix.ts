@@ -21,6 +21,12 @@ export interface CanonicalizationResult {
   reason?: string;
 }
 
+export interface CanonicalizationOptions {
+  mode?: 'backfill' | 'rolling';
+  autoVerifyThreshold?: number; // Confidence threshold for auto-verification (0-1)
+  systemUserId?: string; // User ID for automated verification tracking
+}
+
 export class MixCanonicalizer {
   private supabase = getServiceClient();
   private trackMatcher = new TrackMatcher();
@@ -28,7 +34,10 @@ export class MixCanonicalizer {
   /**
    * Canonicalize a single raw mix
    */
-  async canonicalizeMix(rawMixId: string): Promise<CanonicalizationResult> {
+  async canonicalizeMix(
+    rawMixId: string, 
+    options: CanonicalizationOptions = {}
+  ): Promise<CanonicalizationResult> {
     const result: CanonicalizationResult = {
       success: false,
       tracksCreated: 0,
@@ -61,7 +70,7 @@ export class MixCanonicalizer {
       }
       
       // Create new mix in production
-      return await this.createNewMix(rawMix, rawTracks, result);
+      return await this.createNewMix(rawMix, rawTracks, result, options);
       
     } catch (err) {
       const error = `Canonicalization failed for ${rawMixId}: ${err}`;
@@ -103,6 +112,59 @@ export class MixCanonicalizer {
     return { rawMix, rawTracks: rawTracks || [] };
   }
   
+  /**
+   * Determine if mix should be auto-verified based on mode
+   */
+  private shouldAutoVerifyMix(options: CanonicalizationOptions): boolean {
+    // Rolling mode can auto-verify based on confidence
+    // Backfill mode always requires manual review
+    return options.mode === 'rolling';
+  }
+
+  /**
+   * Get verification fields for auto-verified entities
+   */
+  private getVerificationFields(options: CanonicalizationOptions, shouldVerify: boolean): {
+    is_verified: boolean;
+    verified_by: string | null;
+    verified_at: string | null;
+  } {
+    if (shouldVerify && options.systemUserId) {
+      return {
+        is_verified: true,
+        verified_by: options.systemUserId,
+        verified_at: new Date().toISOString()
+      };
+    }
+    
+    return {
+      is_verified: shouldVerify,
+      verified_by: null,
+      verified_at: null
+    };
+  }
+
+  /**
+   * Determine if track should be auto-verified
+   */
+  private shouldAutoVerifyTrack(confidence: string, options: CanonicalizationOptions): boolean {
+    if (options.mode === 'backfill') {
+      return false; // Always manual review for backfill
+    }
+    
+    // For rolling mode, use confidence threshold
+    const threshold = options.autoVerifyThreshold || 0.9;
+    return confidence === 'high' || (confidence === 'medium' && threshold <= 0.7);
+  }
+
+  /**
+   * Determine if artist should be auto-verified
+   */
+  private shouldAutoVerifyArtist(options: CanonicalizationOptions): boolean {
+    // Artists follow same rules as tracks but are generally more conservative
+    return options.mode === 'rolling';
+  }
+
   /**
    * Create external IDs object from raw mix
    */
@@ -187,7 +249,8 @@ export class MixCanonicalizer {
   private async createNewMix(
     rawMix: RawMix,
     rawTracks: RawTrack[],
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<CanonicalizationResult> {
     // Create the mix record
     const mixData = {
@@ -198,7 +261,7 @@ export class MixCanonicalizer {
       duration: rawMix.duration_seconds,
       published_date: rawMix.uploaded_at,
       external_ids: this.createExternalIds(rawMix),
-      is_verified: false, // Requires admin review
+      ...this.getVerificationFields(options, this.shouldAutoVerifyMix(options)),
       ingestion_source: rawMix.provider,
       raw_mix_id: rawMix.id,
     };
@@ -221,12 +284,12 @@ export class MixCanonicalizer {
     
     // Process mix artist if available
     if (rawMix.raw_artist) {
-      await this.processMixArtist(mixId, rawMix.raw_artist, result);
+      await this.processMixArtist(mixId, rawMix.raw_artist, result, options);
     }
     
     // Process tracks
     if (rawTracks.length > 0) {
-      await this.processTracks(mixId, rawTracks, result);
+      await this.processTracks(mixId, rawTracks, result, options);
     }
     
     // Mark raw mix as processed
@@ -242,7 +305,8 @@ export class MixCanonicalizer {
   private async processMixArtist(
     mixId: string,
     rawArtist: string,
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<void> {
     try {
       const artistMatch = await this.trackMatcher.findMatchingArtists([rawArtist]);
@@ -259,7 +323,7 @@ export class MixCanonicalizer {
           .from('artists')
           .insert({
             name: rawArtist,
-            is_verified: false,
+            ...this.getVerificationFields(options, this.shouldAutoVerifyArtist(options)),
             ingestion_source: 'auto',
           })
           .select('id')
@@ -299,11 +363,12 @@ export class MixCanonicalizer {
   private async processTracks(
     mixId: string,
     rawTracks: RawTrack[],
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<void> {
     for (const rawTrack of rawTracks) {
       try {
-        await this.processTrack(mixId, rawTrack, result);
+        await this.processTrack(mixId, rawTrack, result, options);
       } catch (err) {
         result.errors.push(`Failed to process track ${rawTrack.position}: ${err}`);
       }
@@ -346,7 +411,8 @@ export class MixCanonicalizer {
   private async processTrack(
     mixId: string,
     rawTrack: RawTrack,
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<void> {
     // Match against existing tracks and artists
     const matchResult = await this.trackMatcher.matchTrack({
@@ -399,7 +465,7 @@ export class MixCanonicalizer {
       .from('tracks')
       .insert({
         title: trackTitle,
-        is_verified: matchResult.confidence === 'high',
+        ...this.getVerificationFields(options, this.shouldAutoVerifyTrack(matchResult.confidence, options)),
         ingestion_source: 'auto',
       })
       .select('id')
@@ -413,10 +479,10 @@ export class MixCanonicalizer {
     
     // Create track artists
     if (matchResult.artists.length > 0) {
-      await this.createTrackArtists(track.id, matchResult.artists, result);
+      await this.createTrackArtists(track.id, matchResult.artists, result, options);
     } else if (rawTrack.raw_artist) {
       // Create artist from raw data
-      await this.createTrackArtistFromRaw(track.id, rawTrack.raw_artist, result);
+      await this.createTrackArtistFromRaw(track.id, rawTrack.raw_artist, result, options);
     }
     
     return track.id;
@@ -428,7 +494,8 @@ export class MixCanonicalizer {
   private async createTrackArtists(
     trackId: string,
     artistMatches: TrackMatchResult['artists'],
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<void> {
     for (let i = 0; i < artistMatches.length; i++) {
       const artistMatch = artistMatches[i];
@@ -463,13 +530,14 @@ export class MixCanonicalizer {
   private async createTrackArtistFromRaw(
     trackId: string,
     rawArtist: string,
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<void> {
     const { data: artist, error: artistError } = await this.supabase
       .from('artists')
       .insert({
         name: rawArtist,
-        is_verified: false,
+        ...this.getVerificationFields(options, this.shouldAutoVerifyArtist(options)),
         ingestion_source: 'auto',
       })
       .select('id')

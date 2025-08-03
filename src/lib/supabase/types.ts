@@ -45,12 +45,13 @@ export interface IngestionJob {
   id: string
   worker_type: 'soundcloud' | 'youtube' | '1001tracklists' | 'canonicalization'
   job_payload: Json | null
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'retrying'
+  status: 'pending' | 'running' | 'completed' | 'failed'
   attempts: number
   max_attempts: number
   last_run: string | null
   next_run: string | null
   error_message: string | null
+  requested_by: string | null
   created_at: string
   updated_at: string
 }
@@ -64,6 +65,30 @@ export interface IngestionLog {
   level: 'debug' | 'info' | 'warn' | 'error'
   metadata: Json | null
   created_at: string
+}
+
+export interface SystemHealth {
+  id: string
+  service_name: string
+  last_polled_at: string
+  metadata: Json | null
+  created_at: string
+  updated_at: string
+}
+
+// Job payload interfaces
+export interface BaseJobPayload {
+  worker_type: 'youtube' | 'soundcloud' | '1001tracklists'
+  source_id: string
+  mode: 'backfill' | 'rolling'
+  batch_size: number
+}
+
+export interface StructuredError {
+  video_id?: string
+  error_type: string
+  message: string
+  stack?: string
 }
 
 // External IDs structure with namespaced keys
@@ -92,6 +117,9 @@ export interface Venue {
   capacity: number | null
   website: string | null
   external_ids: ExternalIds | null
+  is_verified: boolean
+  verified_by: string | null
+  verified_at: string | null
   created_at: string
   updated_at: string
 }
@@ -104,6 +132,9 @@ export interface Context {
   website: string | null
   external_ids: ExternalIds | null
   venue_id: string | null
+  is_verified: boolean
+  verified_by: string | null
+  verified_at: string | null
   created_at: string
   updated_at: string
 }
@@ -138,8 +169,13 @@ export interface Database {
       }
       ingestion_jobs: {
         Row: IngestionJob
-        Insert: Omit<IngestionJob, 'id' | 'created_at' | 'updated_at'> & {
+        Insert: Omit<IngestionJob, 'id' | 'created_at' | 'updated_at' | 'attempts' | 'max_attempts' | 'last_run' | 'next_run' | 'error_message'> & {
           id?: string
+          attempts?: number
+          max_attempts?: number
+          last_run?: string | null
+          next_run?: string | null
+          error_message?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -172,7 +208,9 @@ export interface Database {
           created_at: string | null
           created_by: string | null
           external_ids: Json | null
-          is_verified: boolean | null
+          is_verified: boolean
+          verified_by: string | null
+          verified_at: string | null
           ingestion_source: string | null
           ingestion_notes: string | null
           raw_mix_id: string | null
@@ -254,10 +292,13 @@ export interface Database {
       }
       venues: {
         Row: Venue
-        Insert: Omit<Venue, 'id' | 'created_at' | 'updated_at'> & {
+        Insert: Omit<Venue, 'id' | 'created_at' | 'updated_at' | 'is_verified' | 'verified_by' | 'verified_at'> & {
           id?: string
           created_at?: string
           updated_at?: string
+          is_verified?: boolean
+          verified_by?: string | null
+          verified_at?: string | null
         }
         Update: Partial<Omit<Venue, 'id' | 'created_at'>> & {
           updated_at?: string
@@ -265,10 +306,13 @@ export interface Database {
       }
       contexts: {
         Row: Context
-        Insert: Omit<Context, 'id' | 'created_at' | 'updated_at'> & {
+        Insert: Omit<Context, 'id' | 'created_at' | 'updated_at' | 'is_verified' | 'verified_by' | 'verified_at'> & {
           id?: string
           created_at?: string
           updated_at?: string
+          is_verified?: boolean
+          verified_by?: string | null
+          verified_at?: string | null
         }
         Update: Partial<Omit<Context, 'id' | 'created_at'>> & {
           updated_at?: string
@@ -281,6 +325,17 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Omit<MixContext, 'id' | 'created_at'>>
+      }
+      system_health: {
+        Row: SystemHealth
+        Insert: Omit<SystemHealth, 'id' | 'created_at' | 'updated_at'> & {
+          id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: Partial<Omit<SystemHealth, 'id' | 'created_at'>> & {
+          updated_at?: string
+        }
       }
     }
     Views: {}
