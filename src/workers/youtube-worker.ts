@@ -96,11 +96,14 @@ export class YouTubeWorker extends BaseIngestionWorker {
    * Fetch videos from a YouTube channel with pagination support
    */
   private async fetchChannelVideos(
-    channelId: string,
+    channelIdOrUrl: string,
     maxResults: number,
     dateRange?: { from?: Date; to?: Date },
     enablePagination: boolean = false
   ): Promise<RawMix[]> {
+    // Resolve channel ID from URL if needed
+    const channelId = await this.resolveChannelId(channelIdOrUrl);
+    
     // First get the uploads playlist ID
     const channelResponse = await axios.get(`${this.baseUrl}/channels`, {
       params: {
@@ -111,7 +114,7 @@ export class YouTubeWorker extends BaseIngestionWorker {
     });
     
     if (!channelResponse.data.items || channelResponse.data.items.length === 0) {
-      throw new Error(`Channel not found: ${channelId}`);
+      throw new Error(`Channel not found: ${channelId} (original: ${channelIdOrUrl})`);
     }
     
     const uploadsPlaylistId = channelResponse.data.items[0].contentDetails.relatedPlaylists.uploads;
@@ -603,5 +606,91 @@ export class YouTubeWorker extends BaseIngestionWorker {
       title: cleanLine.trim(),
       timestamp,
     };
+  }
+
+  /**
+   * Resolve a channel URL or username to a Channel ID
+   */
+  private async resolveChannelId(input: string): Promise<string> {
+    // If it's already a channel ID (starts with UC and is 24 chars), return as-is
+    if (input.match(/^UC[a-zA-Z0-9_-]{22}$/)) {
+      return input;
+    }
+
+    // Parse different URL formats
+    let username: string | null = null;
+    let channelHandle: string | null = null;
+
+    const urlPatterns = [
+      // https://www.youtube.com/c/Cercle -> Cercle
+      { pattern: /youtube\.com\/c\/([^\/\?&#]+)/, type: 'username' },
+      // https://www.youtube.com/@cercle -> @cercle 
+      { pattern: /youtube\.com\/@([^\/\?&#]+)/, type: 'handle' },
+      // https://www.youtube.com/user/username -> username
+      { pattern: /youtube\.com\/user\/([^\/\?&#]+)/, type: 'username' },
+      // https://www.youtube.com/channel/UC... -> UC... (already handled above)
+      { pattern: /youtube\.com\/channel\/([^\/\?&#]+)/, type: 'id' },
+    ];
+
+    for (const { pattern, type } of urlPatterns) {
+      const match = input.match(pattern);
+      if (match) {
+        if (type === 'id') {
+          return match[1]; // Direct channel ID
+        } else if (type === 'handle') {
+          channelHandle = '@' + match[1];
+        } else {
+          username = match[1];
+        }
+        break;
+      }
+    }
+
+    // If no URL pattern matched, assume it's a direct username or handle
+    if (!username && !channelHandle) {
+      if (input.startsWith('@')) {
+        channelHandle = input;
+      } else {
+        username = input;
+      }
+    }
+
+    // Try to resolve using the YouTube API
+    try {
+      let response;
+      
+      if (channelHandle) {
+        // Use handle (new YouTube API feature)
+        response = await axios.get(`${this.baseUrl}/channels`, {
+          params: {
+            part: 'id',
+            forHandle: channelHandle,
+            key: this.apiKey,
+          },
+        });
+      } else if (username) {
+        // Use legacy username
+        response = await axios.get(`${this.baseUrl}/channels`, {
+          params: {
+            part: 'id',
+            forUsername: username,
+            key: this.apiKey,
+          },
+        });
+      } else {
+        throw new Error('Could not parse channel identifier');
+      }
+
+      if (response.data.items && response.data.items.length > 0) {
+        const resolvedId = response.data.items[0].id;
+        logger.info(`Resolved channel: ${input} -> ${resolvedId}`);
+        return resolvedId;
+      }
+
+      throw new Error(`Channel not found for: ${input}`);
+    } catch (error) {
+      logger.error(`Failed to resolve channel ID for: ${input}`, error as Error);
+      throw new Error(`Could not resolve channel: ${input}`);
+    }
   }
 }

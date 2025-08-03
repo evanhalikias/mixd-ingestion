@@ -162,6 +162,7 @@ export class IngestionJobProcessor {
       const { data, error } = await this.supabase.rpc('get_next_pending_job');
       
       if (error) {
+        logger.warn('RPC function failed, using fallback query', { metadata: { error: error.message } });
         // Fallback to regular query if RPC doesn't exist
         const fallbackResult = await this.supabase
           .from('ingestion_jobs')
@@ -179,7 +180,14 @@ export class IngestionJobProcessor {
         return fallbackResult.data;
       }
 
-      return data;
+      // RPC function returns an array, get the first job
+      const job = data && data.length > 0 ? data[0] : null;
+      if (job) {
+        logger.debug('Retrieved job via RPC', { metadata: { jobId: job.id, workerType: job.worker_type } });
+      } else {
+        logger.debug('No pending jobs found via RPC');
+      }
+      return job;
     } catch (error) {
       logger.error('Error in getNextPendingJob', error as Error);
       return null;
