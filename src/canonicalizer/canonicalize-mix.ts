@@ -430,7 +430,7 @@ export class MixCanonicalizer {
       logger.debug(`Using existing track: ${matchResult.track.match.title}`);
     } else {
       // Create new track
-      trackId = await this.createNewTrack(rawTrack, matchResult, result);
+      trackId = await this.createNewTrack(rawTrack, matchResult, result, options);
     }
     
     // Create mix_tracks relationship
@@ -457,7 +457,8 @@ export class MixCanonicalizer {
   private async createNewTrack(
     rawTrack: RawTrack,
     matchResult: TrackMatchResult,
-    result: CanonicalizationResult
+    result: CanonicalizationResult,
+    options: CanonicalizationOptions = {}
   ): Promise<string> {
     const trackTitle = rawTrack.raw_title || this.extractTitleFromLine(rawTrack.line_text) || 'Unknown Track';
     

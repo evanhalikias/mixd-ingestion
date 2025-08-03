@@ -57,7 +57,9 @@ export class IngestionJobProcessor {
         .maybeSingle();
 
       if (fetchError) {
-        logger.warn('Could not check for system user (users table may not exist)', fetchError);
+        logger.warn('Could not check for system user (users table may not exist)', {
+          metadata: { error: fetchError.message, code: fetchError.code }
+        });
         return;
       }
 
@@ -73,13 +75,15 @@ export class IngestionJobProcessor {
           });
 
         if (insertError) {
-          logger.warn('Could not create system user (will use null for verification)', insertError);
+          logger.warn('Could not create system user (will use null for verification)', {
+            metadata: { error: insertError.message, code: insertError.code }
+          });
         } else {
           logger.info('Created system user for automated verification tracking');
         }
       }
     } catch (error) {
-      logger.warn('Error ensuring system user exists', error as Error);
+      logger.error('Error ensuring system user exists', error as Error);
     }
   }
 
@@ -134,8 +138,10 @@ export class IngestionJobProcessor {
         // Get next pending job
         const job = await this.getNextPendingJob();
         
-        if (job) {
+        if (job && job.id) {
           await this.processJob(job);
+        } else if (job) {
+          logger.warn('Retrieved job with missing ID, skipping', { metadata: { job } });
         }
 
         // Wait before next poll
@@ -565,11 +571,12 @@ export class IngestionJobProcessor {
             poll_interval_ms: this.pollInterval
           },
           updated_at: new Date().toISOString()
-        })
-        .eq('service_name', 'job_runner');
+        }, {
+          onConflict: 'service_name'
+        });
 
       if (error) {
-        logger.error('Failed to update health status', error);
+        logger.error('Failed to update health status', error as Error);
       }
     } catch (error) {
       logger.error('Error updating health status', error as Error);
