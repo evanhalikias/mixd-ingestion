@@ -1,0 +1,46 @@
+{
+  "soundcloud": {
+    "enabled": false,
+    "artists": [
+      "lane8music",
+      "anjunadeep",
+      "enhancedmusic",
+      "armadamusic",
+      "maufivetwo",
+      "cerclemusic"
+    ],
+    "labels": [
+      "anjunadeep",
+      "enhanced",
+      "armada",
+      "mau5trap"
+    ],
+    "maxResults": 50
+  },
+  "youtube": {
+    "enabled": true,
+    "channels": [
+      "UCPKT_csvP72boVX0XrMtagQ"
+    ],
+    "maxResults": 100
+  },
+  "1001tracklists": {
+    "enabled": false,
+    "searchTerms": [
+      "essential mix",
+      "group therapy",
+      "lane 8",
+      "anjunadeep",
+      "cercle",
+      "boiler room"
+    ],
+    "urls": [
+      "https://www.1001tracklists.com/tracklist/essential-mix",
+      "https://www.1001tracklists.com/tracklist/group-therapy"
+    ],
+    "maxResults": 25
+  },
+  "dateRange": {
+    "daysBack": 365
+  }
+}

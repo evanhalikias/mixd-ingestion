@@ -1,0 +1,16 @@
+[
+  {
+    "filename": "001_create_staging_tables.sql",
+    "executedAt": "2025-08-03T04:41:38.962Z",
+    "checksum": "d46",
+    "success": true,
+    "error": "Requires manual execution in Supabase SQL editor"
+  },
+  {
+    "filename": "002_add_production_columns.sql",
+    "executedAt": "2025-08-03T04:41:39.204Z",
+    "checksum": "65e",
+    "success": true,
+    "error": "Requires manual execution in Supabase SQL editor"
+  }
+]

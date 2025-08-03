@@ -8,6 +8,14 @@
     "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
     "clean": "rm -rf dist",
+    "db:types": "supabase gen types typescript --project-id ${SUPABASE_PROJECT_ID} > src/lib/supabase/types.generated.ts",
+    "migrate": "ts-node migrations/simple-migrate.ts",
+    "migrate:status": "ts-node migrations/simple-migrate.ts status",
+    "ingest": "ts-node src/jobs/run-ingestion.ts",
+    "backfill": "ts-node src/jobs/run-backfill.ts",
+    "canonicalize": "ts-node src/jobs/run-canonicalization.ts",
+    "canonicalize:retry": "ts-node src/jobs/run-canonicalization.ts retry",
+    "canonicalize:stats": "ts-node src/jobs/run-canonicalization.ts stats",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,9 +23,24 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@types/cheerio": "^0.22.35",
     "@types/node": "^24.1.0",
     "nodemon": "^3.1.10",
+    "supabase": "^2.33.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.53.0",
+    "@types/node-fetch": "^2.6.13",
+    "@types/pg": "^8.15.5",
+    "axios": "^1.11.0",
+    "cheerio": "^1.1.2",
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.1",
+    "fuzzball": "^2.2.2",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.16.3",
+    "playwright": "^1.54.2"
   }
 }

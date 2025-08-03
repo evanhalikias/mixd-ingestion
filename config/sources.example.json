@@ -1,0 +1,37 @@
+{
+  "soundcloud": {
+    "enabled": true,
+    "artists": [
+      "lane8music",
+      "anjunadeep",
+      "enhancedmusic"
+    ],
+    "labels": [
+      "anjunadeep",
+      "enhanced"
+    ],
+    "maxResults": 50
+  },
+  "youtube": {
+    "enabled": true,
+    "channels": [
+      "UCGBAsFXa8TP60B4d2CGet0w",
+      "UC0fiLCwTmAukotCXYnqsF8g"
+    ],
+    "maxResults": 50
+  },
+  "1001tracklists": {
+    "enabled": true,
+    "searchTerms": [
+      "essential mix",
+      "group therapy"
+    ],
+    "urls": [
+      "https://www.1001tracklists.com/tracklist/example-mix"
+    ],
+    "maxResults": 25
+  },
+  "dateRange": {
+    "daysBack": 7
+  }
+}
