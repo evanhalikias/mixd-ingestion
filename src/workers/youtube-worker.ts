@@ -48,9 +48,13 @@ export class YouTubeWorker extends BaseIngestionWorker {
         const videos = await this.fetchChannelVideos(channelId, maxResults, dateRange, backfillMode);
         rawMixes.push(...videos);
       } catch (err) {
-        logger.error(`Failed to fetch videos from channel ${channelId}`, err as Error, {
+        const errorMessage = `Failed to fetch videos from channel ${channelId}: ${err instanceof Error ? err.message : err}`;
+        logger.error(errorMessage, err as Error, {
           workerType: this.workerType,
         });
+        
+        // Re-throw the error to ensure the job fails properly instead of appearing successful
+        throw new Error(errorMessage);
       }
     }
     
@@ -119,6 +123,21 @@ export class YouTubeWorker extends BaseIngestionWorker {
     
     const uploadsPlaylistId = channelResponse.data.items[0].contentDetails.relatedPlaylists.uploads;
     
+    // Debug logging for playlist ID
+    logger.info(`Channel ${channelId} uploads playlist: ${uploadsPlaylistId}`);
+    
+    // Validate and fix playlist ID if needed
+    let validPlaylistId = uploadsPlaylistId;
+    if (!uploadsPlaylistId) {
+      // Fallback: construct uploads playlist ID from channel ID
+      validPlaylistId = channelId.replace('UC', 'UU');
+      logger.warn(`No uploads playlist found, using constructed ID: ${validPlaylistId}`);
+    } else if (uploadsPlaylistId.startsWith('UUU')) {
+      // Fix double-U issue if it exists
+      validPlaylistId = uploadsPlaylistId.replace(/^UUU/, 'UU');
+      logger.warn(`Fixed double-U playlist ID: ${uploadsPlaylistId} -> ${validPlaylistId}`);
+    }
+    
     // Get videos from uploads playlist with pagination support
     let allPlaylistItems: any[] = [];
     let nextPageToken: string | undefined;
@@ -130,7 +149,7 @@ export class YouTubeWorker extends BaseIngestionWorker {
       const playlistResponse = await axios.get(`${this.baseUrl}/playlistItems`, {
         params: {
           part: 'snippet,contentDetails',
-          playlistId: uploadsPlaylistId,
+          playlistId: validPlaylistId,
           maxResults: batchSize,
           pageToken: nextPageToken,
           key: this.apiKey,

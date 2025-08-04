@@ -52,7 +52,7 @@ export interface SourceConfig {
   urls?: string[];          // Direct URLs to scrape
 }
 
-export type WorkerType = 'soundcloud' | 'youtube' | '1001tracklists';
+export type WorkerType = 'soundcloud' | 'youtube' | '1001tracklists' | 'artist-discovery';
 
 /**
  * Result of a worker run
@@ -76,7 +76,7 @@ export abstract class BaseIngestionWorker implements IngestionWorker {
   /**
    * Fetch new mixes - must be implemented by subclasses
    */
-  abstract fetchNewMixes(config: SourceConfig): Promise<RawMix[]>;
+  abstract fetchNewMixes(config: SourceConfig, backfillMode?: boolean): Promise<RawMix[]>;
   
   /**
    * Optional tracklist parsing - can be overridden by subclasses
@@ -100,8 +100,9 @@ export abstract class BaseIngestionWorker implements IngestionWorker {
     try {
       console.log(`🔄 Starting ${this.name} worker...`);
       
-      // Fetch new mixes
-      const rawMixes = await this.fetchNewMixes(config);
+      // Fetch new mixes - enable backfill mode if specified
+      const backfillMode = (config as any).mode === 'backfill';
+      const rawMixes = await this.fetchNewMixes(config, backfillMode);
       result.mixesFound = rawMixes.length;
       
       console.log(`📥 Found ${rawMixes.length} mixes from ${this.name}`);
@@ -123,10 +124,20 @@ export abstract class BaseIngestionWorker implements IngestionWorker {
         }
       }
       
-      result.success = true;
+      // Determine success based on whether we found any content or encountered errors
+      const hasContent = result.mixesFound > 0;
+      const hasErrors = result.errors.length > 0;
+      
+      result.success = hasContent && !hasErrors;
       result.duration = Date.now() - startTime;
       
-      console.log(`✅ ${this.name} completed: ${result.mixesAdded} added, ${result.mixesSkipped} skipped`);
+      if (result.success) {
+        console.log(`✅ ${this.name} completed: ${result.mixesAdded} added, ${result.mixesSkipped} skipped`);
+      } else if (!hasContent && !hasErrors) {
+        console.log(`⚠️ ${this.name} completed but found no content: 0 mixes found`);
+      } else {
+        console.log(`❌ ${this.name} completed with issues: ${result.mixesAdded} added, ${result.errors.length} errors`);
+      }
       
     } catch (err) {
       const error = `${this.name} worker failed: ${err}`;

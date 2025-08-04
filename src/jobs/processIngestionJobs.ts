@@ -373,8 +373,11 @@ export class IngestionJobProcessor {
    * Convert job payload to worker configuration
    */
   private payloadToWorkerConfig(payload: BaseJobPayload): SourceConfig & { mode?: string; isVerified?: boolean } {
+    // For backfill mode, fetch many more videos; for rolling mode, use batch_size
+    const maxResults = payload.mode === 'backfill' ? 10000 : payload.batch_size;
+    
     const config: SourceConfig & { mode?: string; isVerified?: boolean } = {
-      maxResults: payload.batch_size,
+      maxResults,
     };
 
     // Add source-specific configuration
