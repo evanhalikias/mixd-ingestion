@@ -4,6 +4,7 @@ import { BaseIngestionWorker, type SourceConfig, type WorkerType } from '../lib/
 import type { RawMix, RawTrack } from '../lib/supabase/types';
 import { createExternalId } from '../lib/external-ids';
 import { logger } from '../services/logger';
+import { BasicContextRulesEngine, type ContextSuggestion, type MixContent } from '../lib/context-rules-engine';
 
 /**
  * SoundCloud ingestion worker
@@ -15,10 +16,12 @@ export class SoundCloudWorker extends BaseIngestionWorker {
   
   private clientId?: string;
   private userAgent = 'mixd-ingestion/1.0';
+  private contextRulesEngine: BasicContextRulesEngine;
   
   constructor() {
     super();
     this.clientId = process.env.SOUNDCLOUD_CLIENT_ID;
+    this.contextRulesEngine = new BasicContextRulesEngine();
     
     if (!this.clientId) {
       logger.warn('SOUNDCLOUD_CLIENT_ID not set, will attempt to extract from web player');
@@ -150,69 +153,305 @@ export class SoundCloudWorker extends BaseIngestionWorker {
     
     const tracks = tracksResponse.data.collection || [];
     
-    return tracks
-      .filter((track: any) => this.isValidMix(track, dateRange))
-      .map((track: any) => this.mapAPITrackToRawMix(track));
+    const filteredTracks = tracks.filter((track: any) => this.isValidMix(track, dateRange));
+    return Promise.all(filteredTracks.map((track: any) => this.mapAPITrackToRawMix(track)));
   }
   
   /**
-   * Fetch tracks via web scraping (fallback method)
+   * Fetch tracks via web scraping (enhanced fallback method)
    */
   private async fetchViaWebScraping(
     username: string,
     limit: number,
     dateRange?: { from?: Date; to?: Date }
   ): Promise<RawMix[]> {
-    const url = `https://soundcloud.com/${username}/tracks`;
-    
+    try {
+      const url = `https://soundcloud.com/${username}/tracks`;
+      
+      // Try direct HTTP request first
+      let $ = await this.fetchPageWithAxios(url);
+      let tracks = await this.extractTracksFromHTML($, username, limit);
+      
+      // If we didn't get enough tracks, try with browser automation
+      if (tracks.length === 0) {
+        logger.info(`No tracks found with HTTP request for ${username}, trying browser automation`);
+        $ = await this.fetchPageWithBrowser(url);
+        tracks = await this.extractTracksFromHTML($, username, limit);
+      }
+      
+      // Filter by date range if specified
+      if (dateRange) {
+        tracks = tracks.filter(track => {
+          if (!track.uploaded_at) return true;
+          const uploadDate = new Date(track.uploaded_at);
+          if (dateRange.from && uploadDate < dateRange.from) return false;
+          if (dateRange.to && uploadDate > dateRange.to) return false;
+          return true;
+        });
+      }
+      
+      logger.info(`Scraped ${tracks.length} tracks from SoundCloud page for ${username}`);
+      return tracks;
+      
+    } catch (error) {
+      logger.error(`Web scraping failed for SoundCloud user ${username}`, error as Error);
+      return [];
+    }
+  }
+  
+  /**
+   * Fetch page content using Axios
+   */
+  private async fetchPageWithAxios(url: string): Promise<cheerio.CheerioAPI> {
     const response = await axios.get(url, {
       headers: {
         'User-Agent': this.userAgent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
       },
+      timeout: 15000,
     });
     
-    const $ = cheerio.load(response.data);
+    return cheerio.load(response.data);
+  }
+  
+  /**
+   * Fetch page content using browser automation (fallback)
+   */
+  private async fetchPageWithBrowser(url: string): Promise<cheerio.CheerioAPI> {
+    const { chromium } = await import('playwright');
+    let browser = null;
+    let page = null;
     
-    // Extract tracks from the page
-    // This is a simplified implementation - SoundCloud's actual structure is more complex
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+      
+      page = await browser.newPage({
+        userAgent: this.userAgent,
+      });
+      
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      
+      // Wait for tracks to load
+      await page.waitForTimeout(3000);
+      
+      // Scroll to load more tracks
+      await page.evaluate(() => {
+        for (let i = 0; i < 3; i++) {
+          window.scrollBy(0, window.innerHeight);
+        }
+      });
+      
+      await page.waitForTimeout(2000);
+      
+      const content = await page.content();
+      return cheerio.load(content);
+      
+    } finally {
+      if (page) await page.close();
+      if (browser) await browser.close();
+    }
+  }
+  
+  /**
+   * Extract tracks from HTML content
+   */
+  private async extractTracksFromHTML($: cheerio.CheerioAPI, username: string, limit: number): Promise<RawMix[]> {
     const tracks: RawMix[] = [];
     
-    $('.sound__body').each((index, element) => {
-      if (tracks.length >= limit) return false;
-      
-      const $sound = $(element);
-      const title = $sound.find('.soundTitle__title').text().trim();
-      const permalink = $sound.find('.sound__coverArt').attr('href');
-      
-      if (title && permalink) {
-        const fullUrl = `https://soundcloud.com${permalink}`;
-        
-        tracks.push({
-          id: '', // Will be generated
-          provider: 'soundcloud',
-          source_url: fullUrl,
-          external_id: this.extractTrackIdFromUrl(fullUrl),
-          raw_title: title,
-          raw_description: null, // Would need separate request to get description
-          raw_artist: username,
-          uploaded_at: null, // Would need to parse from page
-          duration_seconds: null,
-          artwork_url: null,
-          raw_metadata: {
-            username,
-            scraped: true,
-          },
-          status: 'pending',
-          canonicalized_mix_id: null,
-          error_message: null,
-          created_at: new Date().toISOString(),
-          processed_at: null,
-        });
-      }
-    });
+    // Try multiple selectors for different SoundCloud layouts
+    const selectors = [
+      'article[role="article"]', // New layout
+      '.sound__body',           // Old layout
+      '.trackItem',             // Alternative layout
+      '[data-sc-track]'         // Data attribute selector
+    ];
     
-    logger.info(`Scraped ${tracks.length} tracks from SoundCloud page`);
+    for (const selector of selectors) {
+      const elements = $(selector).toArray();
+      
+      for (const element of elements) {
+        if (tracks.length >= limit) break;
+        
+        const $el = $(element);
+        const trackData = await this.extractTrackFromElement($el, username);
+        
+        if (trackData) {
+          tracks.push(trackData);
+        }
+      }
+      
+      // If we found tracks with this selector, stop trying others
+      if (tracks.length > 0) break;
+    }
+    
     return tracks;
+  }
+  
+  /**
+   * Extract track data from a single HTML element
+   */
+  private async extractTrackFromElement($el: cheerio.Cheerio<cheerio.Element>, username: string): Promise<RawMix | null> {
+    try {
+      // Try multiple approaches to extract track data
+      let title = '';
+      let permalink = '';
+      let uploadedAt: string | null = null;
+      let artworkUrl: string | null = null;
+      let duration: number | null = null;
+      
+      // Extract title - try multiple selectors
+      const titleSelectors = [
+        '.soundTitle__title',
+        '.sc-link-primary',
+        'h3 a',
+        '[itemprop="name"]',
+        '.trackItem__trackTitle'
+      ];
+      
+      for (const selector of titleSelectors) {
+        const titleEl = $el.find(selector).first();
+        if (titleEl.length > 0) {
+          title = titleEl.text().trim();
+          if (title) break;
+        }
+      }
+      
+      // Extract permalink - try multiple approaches
+      const linkSelectors = [
+        '.soundTitle__title',
+        '.sc-link-primary', 
+        'h3 a',
+        '.trackItem__trackTitle a'
+      ];
+      
+      for (const selector of linkSelectors) {
+        const linkEl = $el.find(selector).first();
+        const href = linkEl.attr('href');
+        if (href) {
+          permalink = href;
+          break;
+        }
+      }
+      
+      // Extract upload date
+      const dateSelectors = [
+        'time',
+        '.sc-ministats-item time',
+        '.trackItem__created time'
+      ];
+      
+      for (const selector of dateSelectors) {
+        const dateEl = $el.find(selector).first();
+        const datetime = dateEl.attr('datetime') || dateEl.attr('title');
+        if (datetime) {
+          uploadedAt = new Date(datetime).toISOString();
+          break;
+        }
+      }
+      
+      // Extract artwork
+      const artworkSelectors = [
+        '.sound__coverArt img',
+        '.sc-artwork img',
+        '.trackItem__artwork img'
+      ];
+      
+      for (const selector of artworkSelectors) {
+        const imgEl = $el.find(selector).first();
+        const src = imgEl.attr('src');
+        if (src) {
+          artworkUrl = src;
+          break;
+        }
+      }
+      
+      // Extract duration
+      const durationSelectors = [
+        '.sc-ministats-item:contains(":")' ,
+        '.trackItem__duration'
+      ];
+      
+      for (const selector of durationSelectors) {
+        const durationEl = $el.find(selector).first();
+        const durationText = durationEl.text().trim();
+        if (durationText.includes(':')) {
+          duration = this.parseDurationToSeconds(durationText);
+          break;
+        }
+      }
+      
+      if (!title || !permalink) {
+        return null;
+      }
+      
+      const fullUrl = permalink.startsWith('http') ? permalink : `https://soundcloud.com${permalink}`;
+      
+      // Use new context rules engine for Phase 2 detection (limited for web scraping)
+      const mixContent: MixContent = {
+        title: title,
+        description: '', // No description available from web scraping
+        artist_name: username,
+        platform: 'soundcloud',
+        channel_name: username,
+        channel_id: null // Not available from web scraping
+      };
+      
+      const contextSuggestions = await this.contextRulesEngine.suggestContexts(
+        mixContent,
+        undefined, // artistId - will be populated after artist is approved
+        'soundcloud'
+      );
+      
+      return {
+        id: '', // Will be generated
+        provider: 'soundcloud',
+        source_url: fullUrl,
+        external_id: this.extractTrackIdFromUrl(fullUrl),
+        raw_title: title,
+        raw_description: null, // Would need separate request to get description
+        raw_artist: username,
+        uploaded_at: uploadedAt,
+        duration_seconds: duration,
+        artwork_url: artworkUrl,
+        raw_metadata: {
+          username,
+          scraped: true,
+          scrape_timestamp: new Date().toISOString()
+        },
+        status: 'pending',
+        canonicalized_mix_id: null,
+        error_message: null,
+        created_at: new Date().toISOString(),
+        processed_at: null,
+        // Add Phase 2 context suggestions to raw_mix for moderator review
+        suggested_contexts: contextSuggestions,
+      };
+      
+    } catch (error) {
+      logger.debug(`Failed to extract track from element: ${error}`);
+      return null;
+    }
+  }
+  
+  /**
+   * Parse duration string (e.g., "3:45") to seconds
+   */
+  private parseDurationToSeconds(durationStr: string): number | null {
+    const match = durationStr.match(/(\d+):(\d{2})/);
+    if (!match) return null;
+    
+    const minutes = parseInt(match[1]);
+    const seconds = parseInt(match[2]);
+    
+    return minutes * 60 + seconds;
   }
   
   /**
@@ -237,7 +476,23 @@ export class SoundCloudWorker extends BaseIngestionWorker {
   /**
    * Map SoundCloud API track data to RawMix
    */
-  private mapAPITrackToRawMix(track: any): RawMix {
+  private async mapAPITrackToRawMix(track: any): Promise<RawMix> {
+    // Use new context rules engine for Phase 2 detection
+    const mixContent: MixContent = {
+      title: track.title || '',
+      description: track.description || '',
+      artist_name: track.user?.display_name || track.user?.username || null,
+      platform: 'soundcloud',
+      channel_name: track.user?.display_name || track.user?.username || null,
+      channel_id: track.user?.id?.toString() || null
+    };
+    
+    const contextSuggestions = await this.contextRulesEngine.suggestContexts(
+      mixContent,
+      undefined, // artistId - will be populated after artist is approved
+      'soundcloud'
+    );
+    
     return {
       id: '', // Will be generated
       provider: 'soundcloud',
@@ -266,6 +521,8 @@ export class SoundCloudWorker extends BaseIngestionWorker {
       error_message: null,
       created_at: new Date().toISOString(),
       processed_at: null,
+      // Add Phase 2 context suggestions to raw_mix for moderator review
+      suggested_contexts: contextSuggestions,
     };
   }
   

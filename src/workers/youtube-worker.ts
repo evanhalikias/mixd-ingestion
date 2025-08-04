@@ -7,6 +7,8 @@ import { extractArtistsFromVideo, extractMultipleArtists } from '../lib/artist-e
 import { getMixDetectionDetails } from '../lib/content-classification/mix-detector';
 import { detectContextsAndVenues } from '../utils/contextVenueDetector';
 import { contextVenueService } from '../lib/contextVenueService';
+import { BasicContextRulesEngine, type ContextSuggestion, type MixContent } from '../lib/context-rules-engine';
+import { getServiceClient } from '../lib/supabase/service';
 
 /**
  * YouTube ingestion worker
@@ -18,10 +20,13 @@ export class YouTubeWorker extends BaseIngestionWorker {
   
   private apiKey: string;
   private baseUrl = 'https://www.googleapis.com/youtube/v3';
+  private contextRulesEngine: BasicContextRulesEngine;
+  private supabase = getServiceClient();
   
   constructor() {
     super();
     this.apiKey = process.env.YOUTUBE_API_KEY || '';
+    this.contextRulesEngine = new BasicContextRulesEngine();
     
     if (!this.apiKey) {
       throw new Error('YOUTUBE_API_KEY environment variable is required');
@@ -401,12 +406,28 @@ export class YouTubeWorker extends BaseIngestionWorker {
       video.snippet.tags || []
     );
 
-    // Detect contexts and venues
+    // Detect contexts and venues using legacy system
     const contextVenueDetection = await detectContextsAndVenues(
       video.snippet.title,
       video.snippet.description || '',
       video.snippet.channelTitle,
       video.snippet.channelId
+    );
+    
+    // Use new context rules engine for Phase 2 detection
+    const mixContent: MixContent = {
+      title: video.snippet.title,
+      description: video.snippet.description || '',
+      artist_name: primaryArtist,
+      platform: 'youtube',
+      channel_name: video.snippet.channelTitle,
+      channel_id: video.snippet.channelId
+    };
+    
+    const contextSuggestions = await this.contextRulesEngine.suggestContexts(
+      mixContent,
+      undefined, // artistId - will be populated after artist is approved
+      'youtube'
     );
     
     logger.debug(`Artist extraction for "${video.snippet.title}": ${artistExtraction.extractionMethod} (${artistExtraction.confidence}) -> ${artistExtraction.performingArtists.join(', ')}`);
@@ -456,7 +477,7 @@ export class YouTubeWorker extends BaseIngestionWorker {
           score: mixDetection.score,
           reasons: mixDetection.reasons
         },
-        // Context and venue detection metadata
+        // Context and venue detection metadata (legacy)
         contextVenueDetection: {
           contexts: contextVenueDetection.contexts.map(context => ({
             name: context.name,
@@ -476,6 +497,8 @@ export class YouTubeWorker extends BaseIngestionWorker {
           } : undefined
         } as any
       },
+      // Add Phase 2 context suggestions to raw_mix for moderator review
+      suggested_contexts: contextSuggestions,
       status: 'pending',
       canonicalized_mix_id: null,
       error_message: null,

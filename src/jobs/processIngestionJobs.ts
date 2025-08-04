@@ -14,6 +14,7 @@ import type {
 import { SoundCloudWorker } from '../workers/soundcloud-worker';
 import { YouTubeWorker } from '../workers/youtube-worker';
 import { OneTracklistWorker } from '../workers/1001tracklists-worker';
+import { ArtistLinkDiscoveryWorker } from '../workers/artist-discovery-worker';
 import { MixCanonicalizer, type CanonicalizationOptions } from '../canonicalizer/canonicalize-mix';
 import type { SourceConfig, BaseIngestionWorker } from '../lib/worker-interface';
 
@@ -42,6 +43,7 @@ export class IngestionJobProcessor {
     ['soundcloud', new SoundCloudWorker()],
     ['youtube', new YouTubeWorker()],
     ['1001tracklists', new OneTracklistWorker()],
+    ['artist-discovery', new ArtistLinkDiscoveryWorker()],
   ]);
 
   /**
@@ -257,7 +259,7 @@ export class IngestionJobProcessor {
       }
     }
 
-    if (!['youtube', 'soundcloud', '1001tracklists'].includes(payload.worker_type)) {
+    if (!['youtube', 'soundcloud', '1001tracklists', 'artist-discovery'].includes(payload.worker_type)) {
       throw new Error(`Invalid worker_type: ${payload.worker_type}`);
     }
 
@@ -292,11 +294,11 @@ export class IngestionJobProcessor {
       // Execute the worker
       const workerResult = await worker.run(config);
 
-      // If successful, canonicalize new raw mixes
+      // Handle canonicalization for workers that produce raw mixes
       let canonicalizedCount = 0;
       let canonicalizationErrors: StructuredError[] = [];
 
-      if (workerResult.success && workerResult.mixesAdded > 0) {
+      if (workerResult.success && workerResult.mixesAdded > 0 && payload.worker_type !== 'artist-discovery') {
         const canonicalizationOptions: CanonicalizationOptions = {
           mode: payload.mode,
           autoVerifyThreshold: payload.mode === 'rolling' ? 0.9 : 0.0,
@@ -335,6 +337,9 @@ export class IngestionJobProcessor {
             }
           }
         }
+      } else if (payload.worker_type === 'artist-discovery') {
+        // For artist discovery, success is measured by profiles discovered/updated
+        canonicalizedCount = workerResult.mixesFound; // mixesFound tracks profiles processed
       }
 
       // Convert worker result to job execution result
@@ -397,6 +402,10 @@ export class IngestionJobProcessor {
         } else {
           config.searchTerms = [payload.source_id];
         }
+        break;
+      case 'artist-discovery':
+        // source_id should be an artist name
+        config.artistNames = [payload.source_id];
         break;
     }
 
